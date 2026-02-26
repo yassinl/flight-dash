@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://weatherdash.local/schemas/state.schema.json",
+  "title": "Matrix State",
+  "type": "object",
+  "required": ["schema_version", "timestamp", "weather", "nearby_count", "stale"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "location": {
+      "type": "object",
+      "required": ["lat", "lon"],
+      "properties": {
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 }
+      }
+    },
+    "weather": {
+      "type": "object",
+      "required": ["condition", "wind_kts", "visibility_m", "alert_level"],
+      "properties": {
+        "condition": { "type": "string" },
+        "wind_kts": { "type": "number", "minimum": 0 },
+        "visibility_m": { "type": "number", "minimum": 0 },
+        "alert_level": { "type": "string", "enum": ["normal", "caution", "alert"] }
+      }
+    },
+    "tracked_flight": {
+      "type": ["object", "null"],
+      "properties": {
+        "id": { "type": "string" },
+        "airline_code": { "type": "string" },
+        "airline_name": { "type": "string" },
+        "logo_url": { "type": "string" },
+        "progress_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "elapsed_min": { "type": "number", "minimum": 0 },
+        "duration_min": { "type": "number", "minimum": 1 },
+        "status": { "type": "string" }
+      }
+    },
+    "nearby_count": { "type": "integer", "minimum": 0 },
+    "stale": { "type": "boolean" }
+  }
+}
