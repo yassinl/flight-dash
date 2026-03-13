@@ -1,6 +1,6 @@
 ## RUN CODE WITH THESE FLAGS TO FIX ANY SOFTWARE CAUSED/TIMING FLICKERS
 
-test
+test!!!
 
 ``sudo ./demo --led-rows=32 --led-cols=64 --led-chain=3 --led-parallel=2 --led-slowdown-gpio=3 --led-pwm-bits=7 --led-pwm-lsb-nanoseconds=50 --led-pwm-dither-bits=1 -D 12``
 
