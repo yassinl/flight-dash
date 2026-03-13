@@ -1,3 +1,5 @@
+// this is deprecated code, i'm thinking we'll need a webserver to allow
+// the user to configure our program from their phone or computer so we can repurpose this later
 const http = require('http');
 
 const WIDTH = 64;
