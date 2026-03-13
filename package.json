@@ -1,0 +1,19 @@
+{
+  "name": "flight-dash",
+  "version": "1.0.0",
+  "description": "Weather + Flight LED Matrix Dashboard",
+  "private": true,
+  "workspaces": [
+    "webapp",
+    "matrix-agent"
+  ],
+  "scripts": {
+    "start:webapp": "npm start --workspace=webapp",
+    "start:matrix": "npm start --workspace=matrix-agent",
+    "dev:webapp": "npm run dev --workspace=webapp",
+    "dev:matrix": "npm run dev --workspace=matrix-agent"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

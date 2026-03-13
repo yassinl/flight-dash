@@ -5,7 +5,7 @@
   "latitude": 40.7128,
   "longitude": -74.006,
   "radius_miles": 100,
-  "tracked_flight_id": null,
+  "tracked_flight_id": "DL110",
   "brightness_pct": 60,
   "refresh_seconds": 15
 }

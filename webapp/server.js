@@ -319,6 +319,203 @@ async function currentState() {
   };
 }
 
+function dashboardHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Flight Dash</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0d0d14; color: #e0e0f0; min-height: 100vh; padding: 16px; }
+    h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 16px; color: #fff; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; max-width: 480px; margin: 0 auto; }
+    @media (min-width: 700px) { .grid { grid-template-columns: 1fr 1fr; max-width: 900px; } }
+    .card { background: #16162a; border: 1px solid #2a2a45; border-radius: 12px; padding: 14px 16px; }
+    .card-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: #7070a0; margin-bottom: 8px; }
+    .alert-normal  { border-color: #1a7a3a; }
+    .alert-caution { border-color: #7a5a00; }
+    .alert-alert   { border-color: #7a1a1a; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; }
+    .badge-normal  { background: #1a4a2a; color: #4ddd88; }
+    .badge-caution { background: #4a3a00; color: #ffcc44; }
+    .badge-alert   { background: #4a0a0a; color: #ff5555; }
+    .stat { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #22223a; }
+    .stat:last-child { border-bottom: none; }
+    .stat-label { font-size: 0.82rem; color: #8080b0; }
+    .stat-value { font-size: 0.92rem; font-weight: 600; color: #dde; }
+    .flight-item { padding: 10px 0; border-bottom: 1px solid #22223a; }
+    .flight-item:last-child { border-bottom: none; }
+    .flight-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .airline-tag { background: #222244; border-radius: 6px; padding: 2px 8px; font-size: 0.78rem; font-weight: 700; color: #aac; }
+    .callsign { font-size: 0.95rem; font-weight: 700; color: #ddf; }
+    .distance { font-size: 0.78rem; color: #7070a0; margin-left: auto; }
+    .progress-bar { background: #222; border-radius: 4px; height: 5px; margin: 4px 0; overflow: hidden; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #3dc878, #5affa0); border-radius: 4px; transition: width 0.3s; }
+    .progress-label { font-size: 0.73rem; color: #7070a0; }
+    .track-btn { display: block; width: 100%; margin-top: 6px; padding: 7px 0; border: 1px solid #2a2a55; border-radius: 8px; background: #1a1a35; color: #88aaff; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+    .track-btn:hover { background: #252550; }
+    .track-btn.active { background: #1a3060; border-color: #4466cc; color: #aaccff; }
+    .tracked-label { font-size: 0.7rem; color: #4ddd88; font-weight: 700; letter-spacing: 0.08em; margin-left: 4px; }
+    .no-flights { color: #555577; font-size: 0.9rem; padding: 12px 0; }
+    .refresh-row { display: flex; justify-content: space-between; align-items: center; max-width: 480px; margin: 0 auto 12px; }
+    @media (min-width: 700px) { .refresh-row { max-width: 900px; } }
+    .last-updated { font-size: 0.75rem; color: #555577; }
+    .refresh-btn { padding: 6px 14px; border: 1px solid #2a2a45; border-radius: 8px; background: #16162a; color: #8888cc; font-size: 0.8rem; cursor: pointer; }
+    .refresh-btn:hover { background: #1e1e3a; }
+    .error-bar { background: #3a0a0a; border: 1px solid #7a1a1a; border-radius: 8px; padding: 10px 14px; font-size: 0.85rem; color: #ff7777; margin-bottom: 12px; max-width: 480px; margin-left: auto; margin-right: auto; }
+    @media (min-width: 700px) { .error-bar { max-width: 900px; } }
+  </style>
+</head>
+<body>
+  <div style="max-width:480px;margin:0 auto 8px;">
+    <h1>✈ Flight Dash</h1>
+  </div>
+  <div id="error-bar" style="display:none" class="error-bar"></div>
+  <div class="refresh-row">
+    <span class="last-updated" id="last-updated">Loading…</span>
+    <button class="refresh-btn" id="refresh-btn">Refresh</button>
+  </div>
+  <div class="grid" id="grid">
+    <div class="card"><div class="card-title">Weather</div><div style="color:#555577;font-size:.85rem">Loading…</div></div>
+    <div class="card"><div class="card-title">Nearby Flights</div><div style="color:#555577;font-size:.85rem">Loading…</div></div>
+  </div>
+
+  <script>
+    let trackedId = null;
+    let refreshTimer = null;
+
+    function fmtTime(iso) {
+      try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+    }
+
+    function alertClass(level) {
+      if (level === 'alert') return 'alert-alert';
+      if (level === 'caution') return 'alert-caution';
+      return 'alert-normal';
+    }
+
+    function badgeClass(level) {
+      if (level === 'alert') return 'badge-alert';
+      if (level === 'caution') return 'badge-caution';
+      return 'badge-normal';
+    }
+
+    function weatherCard(state) {
+      const w = state.weather || {};
+      const level = w.alert_level || 'normal';
+      return \`<div class="card \${alertClass(level)}">
+        <div class="card-title">Weather</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <span class="badge \${badgeClass(level)}">\${level.toUpperCase()}</span>
+          <span style="font-size:.82rem;color:#8888aa;">\${w.condition || ''}</span>
+        </div>
+        <div class="stat"><span class="stat-label">Wind</span><span class="stat-value">\${w.wind_kts ?? '—'} kts</span></div>
+        <div class="stat"><span class="stat-label">Visibility</span><span class="stat-value">\${w.visibility_m != null ? (w.visibility_m / 1000).toFixed(1) + ' km' : '—'}</span></div>
+        <div class="stat"><span class="stat-label">Nearby flights</span><span class="stat-value">\${state.nearby_count ?? 0}</span></div>
+        <div class="stat"><span class="stat-label">Provider</span><span class="stat-value">\${state.provider || '—'}</span></div>
+        <div class="stat"><span class="stat-label">Updated</span><span class="stat-value">\${fmtTime(state.timestamp)}</span></div>
+      </div>\`;
+    }
+
+    function flightCard(flights, currentTrackedId) {
+      let items = '';
+      if (!flights || flights.length === 0) {
+        items = '<p class="no-flights">No flights in range.</p>';
+      } else {
+        for (const f of flights) {
+          const isTracked = f.id === currentTrackedId;
+          const prog = Math.round(f.progress_pct || 0);
+          items += \`<div class="flight-item">
+            <div class="flight-header">
+              <span class="airline-tag">\${f.airline_code || '??'}</span>
+              <span class="callsign">\${f.callsign || f.id}\${isTracked ? '<span class="tracked-label">TRACKING</span>' : ''}</span>
+              <span class="distance">\${f.distance_miles != null ? f.distance_miles + ' mi' : ''}</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:\${prog}%"></div></div>
+            <div class="progress-label">\${prog}% &nbsp;·&nbsp; \${f.elapsed_min ?? 0} / \${f.duration_min ?? '?'} min</div>
+            <button class="track-btn\${isTracked ? ' active' : ''}" data-id="\${f.id}">\${isTracked ? '★ Tracking' : 'Track this flight'}</button>
+          </div>\`;
+        }
+      }
+      return \`<div class="card">
+        <div class="card-title">Nearby Flights</div>
+        \${items}
+      </div>\`;
+    }
+
+    async function trackFlight(id) {
+      try {
+        const res = await fetch('/api/track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flight_id: id })
+        });
+        if (res.ok) {
+          trackedId = id;
+          await refresh();
+        }
+      } catch (e) {
+        showError('Track failed: ' + e.message);
+      }
+    }
+
+    function showError(msg) {
+      const bar = document.getElementById('error-bar');
+      bar.textContent = msg;
+      bar.style.display = 'block';
+    }
+
+    function clearError() {
+      const bar = document.getElementById('error-bar');
+      bar.style.display = 'none';
+    }
+
+    async function refresh() {
+      clearError();
+      try {
+        const [stateRes, flightsRes] = await Promise.all([
+          fetch('/api/state/current'),
+          fetch('/api/flights')
+        ]);
+        if (!stateRes.ok || !flightsRes.ok) throw new Error('API error');
+        const state = await stateRes.json();
+        const flightsData = await flightsRes.json();
+
+        trackedId = (state.tracked_flight && state.tracked_flight.id) || trackedId;
+
+        document.getElementById('grid').innerHTML =
+          weatherCard(state) + flightCard(flightsData.flights || [], trackedId);
+
+        document.getElementById('last-updated').textContent =
+          'Updated ' + new Date().toLocaleTimeString();
+
+        document.querySelectorAll('.track-btn').forEach((btn) => {
+          btn.addEventListener('click', () => trackFlight(btn.dataset.id));
+        });
+      } catch (e) {
+        showError('Refresh failed: ' + e.message);
+        document.getElementById('last-updated').textContent = 'Failed at ' + new Date().toLocaleTimeString();
+      }
+    }
+
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+      clearTimeout(refreshTimer);
+      refresh().then(scheduleNext);
+    });
+
+    function scheduleNext() {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => refresh().then(scheduleNext), 5000);
+    }
+
+    refresh().then(scheduleNext);
+  </script>
+</body>
+</html>`;
+}
+
 const server = http.createServer(async (req, res) => {
   if (!req.url) {
     sendJson(res, 404, { error: 'Not found' });
@@ -412,6 +609,12 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/state/current') {
     sendJson(res, 200, await currentState());
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(dashboardHtml());
     return;
   }
 

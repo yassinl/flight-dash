@@ -1,0 +1,13 @@
+{
+  "name": "flight-dash-matrix-agent",
+  "version": "1.0.0",
+  "description": "Matrix preview agent for the 64x32 LED display",
+  "main": "preview-agent.js",
+  "scripts": {
+    "start": "node preview-agent.js",
+    "dev": "node --watch preview-agent.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
