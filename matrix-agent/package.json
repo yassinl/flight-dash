@@ -1,0 +1,14 @@
+{
+  "name": "flight-dash-matrix-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-based 64×32 matrix preview and configuration web server",
+  "main": "preview-agent.js",
+  "scripts": {
+    "start": "node preview-agent.js",
+    "dev": "node --watch preview-agent.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

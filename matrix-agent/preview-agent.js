@@ -1,5 +1,6 @@
-// this is deprecated code, i'm thinking we'll need a webserver to allow
-// the user to configure our program from their phone or computer so we can repurpose this later
+// matrix-agent preview server — serves a browser-based 64×32 matrix preview
+// and will be extended into a full configuration web server so users can
+// adjust settings (location, tracked flight, brightness) from a phone or browser.
 const http = require('http');
 
 const WIDTH = 64;

@@ -1,0 +1,18 @@
+{
+  "name": "flight-dash",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "webapp",
+    "matrix-agent",
+    "matrix-bridge"
+  ],
+  "scripts": {
+    "start:webapp": "npm start --workspace=webapp",
+    "start:preview": "npm start --workspace=matrix-agent",
+    "start:bridge": "npm start --workspace=matrix-bridge"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

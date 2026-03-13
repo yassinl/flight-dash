@@ -1,0 +1,14 @@
+{
+  "name": "flight-dash-webapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend API and web dashboard for the flight-dash LED matrix project",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
