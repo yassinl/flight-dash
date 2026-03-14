@@ -1,0 +1,17 @@
+[Unit]
+Description=Matrix LED Flight Dashboard Driver
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/matrix-agent
+EnvironmentFile=/etc/matrix-agent/env
+ExecStart=/home/pi/matrix-agent/driver
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

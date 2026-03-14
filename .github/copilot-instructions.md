@@ -1,0 +1,1 @@
+- Prefer shell/Linux commands for writing and editing code files due to tool-call write permission issues.

@@ -1,0 +1,17 @@
+[Unit]
+Description=Matrix Flight Dashboard Web Server (mDNS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/matrix-agent
+ExecStart=/usr/bin/python3 /home/pi/matrix-agent/server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

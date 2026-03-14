@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat > /z/matrix-agent/systemd/matrix-driver.service << 'EOF'\n[Unit]\nDescription=Matrix LED Flight Dashboard Driver\nAfter=multi-user.target\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=/home/pi/matrix-agent\nExecStart=/usr/bin/python3 /home/pi/matrix-agent/driver.py\nRestart=always\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nEOF\n\ncat > /z/matrix-agent/systemd/matrix-web.service << 'EOF'\n[Unit]\nDescription=Matrix Flight Dashboard Web Server \\(mDNS\\)\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=pi\nWorkingDirectory=/home/pi/matrix-agent\nExecStart=/usr/bin/python3 /home/pi/matrix-agent/server.py\nRestart=always\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nEOF\necho \"systemd units written: $?\")"
+    ]
+  }
+}
