@@ -7,15 +7,14 @@ struct FlightState {
     // Identification
     std::string icao24;         // e.g. "a0b1c2"
     std::string callsign;       // e.g. "DAL442"
-    std::string airline;        // e.g. "Delta Air Lines"
-    std::string aircraft_type;  // e.g. "B739"
+    std::string airline;        // derived from callsign prefix, e.g. "Delta Air Lines"
     std::string squawk;         // transponder squawk code, e.g. "1234"
 
     // Route
     std::string origin_icao;    // e.g. "KSEA"
-    std::string origin_name;    // e.g. "Seattle-Tacoma"
     std::string dest_icao;      // e.g. "LFPG"
-    std::string dest_name;      // e.g. "Paris Charles de Gaulle"
+    int         fa_progress_pct = -1;  // FA's actual route progress (0-100), -1 = unknown
+    time_t      fa_eta_unix     = 0;   // FA estimated arrival unix timestamp, 0 = unknown
 
     // Live position
     float latitude  = 0.f;     // decimal degrees
@@ -47,10 +46,28 @@ public:
                const std::string &client_id,
                const std::string &client_secret);
 
-    // Fetch latest state + route + airport positions from OpenSky.
+    // Fetch latest state + airport positions from OpenSky.
     bool refresh();
 
     const FlightState &state() const { return state_; }
+
+    // Pre-populate state from an external source (e.g. a bounding-box query)
+    // so refresh() can skip the redundant per-aircraft /states/all call.
+    void prime(const FlightState &s) { state_ = s; }
+
+    // Returns the full name for an airport ICAO, or "" if unknown.
+    static std::string airport_name(const std::string &icao);
+
+    // Returns the airline name for a 3-letter ICAO prefix, or "" if not a known airline.
+    static std::string airline_name(const std::string &prefix);
+
+    // Returns the ICAO code of the nearest airport within max_km, or "".
+    // If major_only, restricts to large_airport and medium_airport types.
+    static std::string nearest_airport_icao(float lat, float lon,
+                                            float max_km, bool major_only);
+
+    // Optional: set a FlightAware AeroAPI key to use as primary route source.
+    void set_flightaware_key(const std::string &key) { fa_key_ = key; }
 
 private:
     std::string icao24_;
@@ -58,6 +75,7 @@ private:
     std::string client_secret_;
     FlightState state_;
 
+    std::string fa_key_;        // FlightAware AeroAPI key (optional)
     std::string token_;
     long        token_expiry_ = 0;  // unix timestamp when token expires
 
@@ -69,9 +87,6 @@ private:
 
     // Parse /states/all response into state_.
     bool parse_state(const std::string &body);
-
-    // Parse /flights/aircraft response into origin/dest ICAO codes.
-    bool parse_route(const std::string &body);
 
     // Fetch lat/lon for an airport ICAO; returns false if unavailable.
     bool fetch_airport_pos(const std::string &icao, float &lat, float &lon);

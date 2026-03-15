@@ -1,15 +1,29 @@
 #include "flight_data.h"
+#include "route_lookup.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <ctime>
+#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <stdio.h>
 #include <string.h>
+#include <unordered_map>
 
 using json = nlohmann::json;
+
+// ---------------------------------------------------------------------------
+// Forward declarations for static data loaded lazily
+// ---------------------------------------------------------------------------
+static std::unordered_map<std::string, std::string> s_airlines;
+static bool s_airlines_loaded = false;
+static void load_airlines();
+
+static std::string nearest_airport(float lat, float lon, float max_km,
+                                   bool major_only = false);
 
 // ---------------------------------------------------------------------------
 // Placeholder data — fill in once API keys are available
@@ -18,11 +32,6 @@ static const char *OPENSKY_BASE    = "https://opensky-network.org/api";
 static const char *OPENSKY_TOKEN_URL =
     "https://auth.opensky-network.org/auth/realms/opensky-network"
     "/protocol/openid-connect/token";
-static const char *PLACEHOLDER_AIRLINE       = "Delta Air Lines";
-static const char *PLACEHOLDER_AIRCRAFT_TYPE = "B739";
-static const char *PLACEHOLDER_ORIGIN_NAME   = "Seattle-Tacoma";
-static const char *PLACEHOLDER_DEST_NAME     = "Paris Charles de Gaulle";
-
 // ---------------------------------------------------------------------------
 // libcurl write callback
 // ---------------------------------------------------------------------------
@@ -31,6 +40,8 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
     buf->append(ptr, size * nmemb);
     return size * nmemb;
 }
+
+
 
 // ---------------------------------------------------------------------------
 FlightData::FlightData(const std::string &icao24,
@@ -44,32 +55,40 @@ FlightData::FlightData(const std::string &icao24,
     // even before the first successful API call.
     state_.icao24        = icao24;
     state_.callsign      = icao24;
-    state_.airline       = PLACEHOLDER_AIRLINE;
-    state_.aircraft_type = PLACEHOLDER_AIRCRAFT_TYPE;
-    state_.origin_name   = PLACEHOLDER_ORIGIN_NAME;
-    state_.dest_name     = PLACEHOLDER_DEST_NAME;
 }
 
 // ---------------------------------------------------------------------------
 bool FlightData::refresh() {
     // --- Live state (position, speed, altitude, track, vertical rate) ---
-    std::string state_url = std::string(OPENSKY_BASE)
-                          + "/states/all?icao24=" + icao24_;
-    std::string state_body = http_get(state_url);
-    if (state_body.empty()) return false;
-    if (!parse_state(state_body)) return false;
+    // Skip if already primed from a bounding-box query (saves 4 API credits).
+    if (!state_.valid) {
+        std::string state_url = std::string(OPENSKY_BASE)
+                              + "/states/all?icao24=" + icao24_;
+        std::string state_body = http_get(state_url);
+        if (state_body.empty()) return false;
+        if (!parse_state(state_body)) return false;
+    }
 
-    // --- Route (origin/dest ICAO) from yesterday's completed flight ---
-    // /flights/aircraft is batch-processed nightly; query 1-3 days ago to get
-    // the most recent completed leg for this aircraft.
-    time_t now = time(nullptr);
-    std::ostringstream route_url;
-    route_url << OPENSKY_BASE << "/flights/aircraft"
-              << "?icao24=" << icao24_
-              << "&begin=" << (now - 3 * 86400)
-              << "&end="   << (now - 86400);
-    std::string route_body = http_get(route_url.str());
-    if (!route_body.empty()) parse_route(route_body);
+    // Derive airline name from the 3-letter ICAO callsign prefix
+    if (!s_airlines_loaded) load_airlines();
+    state_.airline.clear();
+    if (state_.callsign.size() >= 3) {
+        auto it = s_airlines.find(state_.callsign.substr(0, 3));
+        if (it != s_airlines.end()) state_.airline = it->second;
+    }
+
+    // --- Route (origin/dest) ---
+    // FlightAware is primary (real filed flight plan); track-based inference is fallback.
+    ensure_token();
+    RouteInfo route = lookup_route(fa_key_, token_,
+                                   state_.callsign, icao24_,
+                                   state_.latitude, state_.longitude,
+                                   state_.altitude_m, state_.vertical_rate_ms,
+                                   state_.track_deg);
+    state_.origin_icao    = route.origin_icao;
+    state_.dest_icao      = route.dest_icao;
+    state_.fa_progress_pct = route.progress_pct;
+    state_.fa_eta_unix    = route.eta_unix;
 
     // --- Airport positions (for great-circle progress) ---
     if (!state_.origin_icao.empty() && !state_.dest_icao.empty()) {
@@ -190,61 +209,137 @@ bool FlightData::parse_state(const std::string &body) {
 }
 
 // ---------------------------------------------------------------------------
-// OpenSky /flights/aircraft — array of completed flight records (batch, nightly).
-// We take the most recent entry to get origin/dest ICAO codes.
+// Airport database — loaded once from airports.csv (OurAirports public data).
+// Set AIRPORTS_CSV env var to override the path; defaults to "airports.csv"
+// in the working directory.
 // ---------------------------------------------------------------------------
-bool FlightData::parse_route(const std::string &body) {
-    try {
-        auto j = json::parse(body);
-        if (!j.is_array() || j.empty()) return false;
+struct AirportPos { float lat, lon; std::string name; std::string type; };
+static std::unordered_map<std::string, AirportPos> s_airports;
+static bool s_airports_loaded = false;
 
-        auto &f = j.back();
-        if (f.contains("estDepartureAirport") && !f["estDepartureAirport"].is_null())
-            state_.origin_icao = f["estDepartureAirport"].get<std::string>();
-        if (f.contains("estArrivalAirport") && !f["estArrivalAirport"].is_null())
-            state_.dest_icao   = f["estArrivalAirport"].get<std::string>();
-        if (f.contains("callsign") && !f["callsign"].is_null())
-            state_.callsign    = f["callsign"].get<std::string>();
-
-        return true;
-    } catch (const std::exception &e) {
-        fprintf(stderr, "parse_route error: %s\n", e.what());
-        return false;
+static std::string next_csv_field(const std::string &line, size_t &pos) {
+    std::string field;
+    if (pos >= line.size()) return field;
+    if (line[pos] == '"') {
+        ++pos;
+        while (pos < line.size() && line[pos] != '"') field += line[pos++];
+        if (pos < line.size()) ++pos; // closing quote
+    } else {
+        while (pos < line.size() && line[pos] != ',') field += line[pos++];
     }
+    if (pos < line.size() && line[pos] == ',') ++pos;
+    return field;
 }
 
 // ---------------------------------------------------------------------------
-// Nominatim (OpenStreetMap) — free, no API key, returns lat/lon for an ICAO.
+// Airline database — loaded once from airlines.dat (OpenFlights public data).
+// Set AIRLINES_DAT env var to override path; defaults to "airlines.dat".
+// Format: ID, Name, Alias, IATA, ICAO, Callsign, Country, Active
 // ---------------------------------------------------------------------------
+static void load_airlines() {
+    const char *path = getenv("AIRLINES_DAT");
+    if (!path) path = "airlines.dat";
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        fprintf(stderr, "airlines.dat not found — set AIRLINES_DAT env var\n");
+        s_airlines_loaded = true;
+        return;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t pos = 0;
+        std::string fields[5];
+        for (int i = 0; i < 5; ++i) fields[i] = next_csv_field(line, pos);
+        // col 1 = name, col 4 = ICAO prefix
+        const std::string &name = fields[1];
+        const std::string &icao = fields[4];
+        if (icao.empty() || icao == "N/A" || icao == "\\N") continue;
+        if (name.empty() || name == "\\N") continue;
+        s_airlines[icao] = name;
+    }
+    fprintf(stderr, "loaded %zu airlines from %s\n", s_airlines.size(), path);
+    s_airlines_loaded = true;
+}
+
+static void load_airports() {
+    const char *path = getenv("AIRPORTS_CSV");
+    if (!path) path = "airports.csv";
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        fprintf(stderr, "airports.csv not found — set AIRPORTS_CSV env var\n");
+        s_airports_loaded = true;
+        return;
+    }
+    std::string line;
+    std::getline(f, line); // skip header
+    while (std::getline(f, line)) {
+        size_t pos = 0;
+        std::string fields[6];
+        for (int i = 0; i < 6; ++i) fields[i] = next_csv_field(line, pos);
+        // col 1 = ident, col 2 = type, col 3 = name, col 4 = lat, col 5 = lon
+        if (fields[2] == "heliport" || fields[2] == "balloonport" || fields[2] == "closed") continue;
+        if (fields[1].empty() || fields[4].empty() || fields[5].empty()) continue;
+        try {
+            s_airports[fields[1]] = { std::stof(fields[4]), std::stof(fields[5]), fields[3], fields[2] };
+        } catch (...) {}
+    }
+    fprintf(stderr, "loaded %zu airports from %s\n", s_airports.size(), path);
+    s_airports_loaded = true;
+}
+
+// Find the nearest airport to (lat, lon) within max_km.
+// If major_only, restricts to large_airport and medium_airport types.
+static std::string nearest_airport(float lat, float lon, float max_km,
+                                   bool major_only) {
+    if (!s_airports_loaded) load_airports();
+    std::string best;
+    float best_d = max_km;
+    const float cos_lat = cosf(lat * 0.01745329f);
+    for (auto &kv : s_airports) {
+        if (major_only && kv.second.type != "large_airport"
+                       && kv.second.type != "medium_airport") continue;
+        // Exclude military/government fields — commercial aircraft don't land there
+        const std::string &n = kv.second.name;
+        if (n.find("Air Force")   != std::string::npos) continue;
+        if (n.find("AFB")         != std::string::npos) continue;
+        if (n.find("Air Base")    != std::string::npos) continue;
+        if (n.find("Naval")       != std::string::npos) continue;
+        if (n.find("Army")        != std::string::npos) continue;
+        if (n.find("Joint Base")  != std::string::npos) continue;
+        if (n.find("Military")    != std::string::npos) continue;
+        float dlat = (kv.second.lat - lat) * 111.0f;
+        float dlon = (kv.second.lon - lon) * 111.0f * cos_lat;
+        float d = sqrtf(dlat*dlat + dlon*dlon);
+        if (d < best_d) { best_d = d; best = kv.first; }
+    }
+    return best;
+}
+
+std::string FlightData::nearest_airport_icao(float lat, float lon,
+                                             float max_km, bool major_only) {
+    return nearest_airport(lat, lon, max_km, major_only);
+}
+
+std::string FlightData::airline_name(const std::string &prefix) {
+    if (!s_airlines_loaded) load_airlines();
+    auto it = s_airlines.find(prefix);
+    return (it != s_airlines.end()) ? it->second : "";
+}
+
+std::string FlightData::airport_name(const std::string &icao) {
+    if (!s_airports_loaded) load_airports();
+    auto it = s_airports.find(icao);
+    return (it != s_airports.end()) ? it->second.name : "";
+}
+
 bool FlightData::fetch_airport_pos(const std::string &icao, float &lat, float &lon) {
-    std::string url = "https://nominatim.openstreetmap.org/search"
-                      "?q=" + icao + "+airport&format=json&limit=1";
-
-    CURL *curl = curl_easy_init();
-    if (!curl) return false;
-    std::string body;
-    // Nominatim requires a User-Agent
-    struct curl_slist *headers = curl_slist_append(nullptr,
-        "User-Agent: flight-dash/1.0");
-    curl_easy_setopt(curl, CURLOPT_URL,           url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER,    headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT,       10L);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    if (res != CURLE_OK || body.empty()) return false;
-
-    try {
-        auto j = json::parse(body);
-        if (!j.is_array() || j.empty()) return false;
-        lat = std::stof(j[0].at("lat").get<std::string>());
-        lon = std::stof(j[0].at("lon").get<std::string>());
-        return true;
-    } catch (const std::exception &e) {
-        fprintf(stderr, "fetch_airport_pos(%s) error: %s\n", icao.c_str(), e.what());
+    if (!s_airports_loaded) load_airports();
+    auto it = s_airports.find(icao);
+    if (it == s_airports.end()) {
+        fprintf(stderr, "fetch_airport_pos: unknown airport %s\n", icao.c_str());
         return false;
     }
+    lat = it->second.lat;
+    lon = it->second.lon;
+    return true;
 }

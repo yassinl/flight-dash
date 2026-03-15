@@ -73,6 +73,7 @@ static LatLon get_location() {
 struct NearbyFlight {
     std::string icao24;
     std::string callsign;
+    FlightState state;
 };
 
 static std::string fetch_token(const std::string &client_id,
@@ -101,14 +102,16 @@ static std::string fetch_token(const std::string &client_id,
 
 static std::vector<NearbyFlight> find_nearby(double lat, double lon,
                                              const std::string &token,
-                                             int max_results = 10) {
-    const double D = 2.0;  // ±2° bounding box (~220 km at mid-latitudes)
+                                             int max_results = 50) {
+    // 50 miles ≈ 0.725° latitude; longitude degrees shrink with cos(lat)
+    const double dlat = 50.0 / 69.0;
+    const double dlon = 50.0 / (69.0 * std::cos(lat * M_PI / 180.0));
     std::ostringstream url;
     url << "https://opensky-network.org/api/states/all"
-        << "?lamin=" << (lat - D)
-        << "&lomin=" << (lon - D)
-        << "&lamax=" << (lat + D)
-        << "&lomax=" << (lon + D)
+        << "?lamin=" << (lat - dlat)
+        << "&lomin=" << (lon - dlon)
+        << "&lamax=" << (lat + dlat)
+        << "&lomax=" << (lon + dlon)
         << "&extended=1";  // include category field (index 17)
 
     CURL *curl = curl_easy_init();
@@ -151,7 +154,7 @@ std::string icao24   = s[0].is_null() ? "" : s[0].get<std::string>();
             while (!callsign.empty() && callsign.back() == ' ')
                 callsign.pop_back();
 
-            // 3 uppercase letters + digits
+            // 3 uppercase letters + digits, prefix must be a known airline
             if (callsign.size() < 4) continue;
             bool valid = true;
             for (int i = 0; i < 3; ++i)
@@ -160,8 +163,23 @@ std::string icao24   = s[0].is_null() ? "" : s[0].get<std::string>();
             for (size_t i = 3; i < callsign.size(); ++i)
                 if (callsign[i] < '0' || callsign[i] > '9') { valid = false; break; }
             if (!valid) continue;
+            if (FlightData::airline_name(callsign.substr(0, 3)).empty()) continue;
 
-            results.push_back({ icao24, callsign });
+            FlightState st;
+            st.icao24           = icao24;
+            st.callsign         = callsign;
+            st.longitude        = s[5].is_null()  ? 0.f : s[5].get<float>();
+            st.latitude         = s[6].is_null()  ? 0.f : s[6].get<float>();
+            st.altitude_m       = s[7].is_null()  ? 0.f : s[7].get<float>();
+            st.on_ground        = s[8].is_null()  ? false : s[8].get<bool>();
+            st.speed_ms         = s[9].is_null()  ? 0.f : s[9].get<float>();
+            st.track_deg        = s[10].is_null() ? 0.f : s[10].get<float>();
+            st.vertical_rate_ms = s[11].is_null() ? 0.f : s[11].get<float>();
+            st.geo_altitude_m   = (s.size() > 13 && !s[13].is_null()) ? s[13].get<float>() : 0.f;
+            st.squawk           = (s.size() > 14 && !s[14].is_null()) ? s[14].get<std::string>() : "";
+            st.last_contact_unix = s[4].is_null() ? 0 : (time_t)s[4].get<long>();
+            st.valid            = true;
+            results.push_back({ icao24, callsign, st });
         }
     } catch (const std::exception &e) {
         std::cerr << "find_nearby parse error: " << e.what() << "\n";
@@ -209,16 +227,18 @@ static void print_progress_bar(double pct, int width = 40) {
 // Step 3: pretty-print a FlightState
 // ---------------------------------------------------------------------------
 static void print_state(const FlightState &s) {
-    time_t now = time(nullptr);
     std::cout << std::fixed << std::setprecision(1);
 
     std::cout << "\n========================================\n";
     std::cout << "  IDENTIFICATION\n";
     std::cout << "  icao24       : " << s.icao24 << "\n";
     std::cout << "  callsign     : " << s.callsign << "\n";
+    if (s.callsign.size() >= 3) {
+        std::string logo = s.callsign.substr(0, 3) + ".png";
+        std::cout << "  logo         : " << logo << "\n";
+    }
     std::cout << "  squawk       : " << (s.squawk.empty() ? "n/a" : s.squawk) << "\n";
-    std::cout << "  airline      : " << s.airline << "\n";
-    std::cout << "  aircraft     : " << s.aircraft_type << "\n";
+    std::cout << "  airline      : " << (s.airline.empty() ? "unknown" : s.airline) << "\n";
     std::cout << "  on ground    : " << (s.on_ground ? "yes" : "no") << "\n";
     std::cout << "  data valid   : " << (s.valid    ? "yes" : "no") << "\n";
 
@@ -237,34 +257,42 @@ static void print_state(const FlightState &s) {
               << (s.vertical_rate_ms >= 0 ? "climbing" : "descending") << ")\n";
 
     std::cout << "\n  ROUTE\n";
-    std::cout << "  origin       : " << s.origin_icao
-              << (s.origin_name.empty() ? "" : "  (" + s.origin_name + ")") << "\n";
-    std::cout << "  destination  : " << s.dest_icao
-              << (s.dest_name.empty()   ? "" : "  (" + s.dest_name   + ")") << "\n";
+    auto fmt_airport = [](const std::string &icao) -> std::string {
+        if (icao.empty()) return "unknown";
+        std::string name = FlightData::airport_name(icao);
+        return name.empty() ? icao : icao + "  (" + name + ")";
+    };
+    std::cout << "  origin       : " << fmt_airport(s.origin_icao) << "\n";
+    std::cout << "  destination  : " << fmt_airport(s.dest_icao)   << "\n";
 
     std::cout << "\n  TIMING\n";
     std::cout << "  last contact : " << fmt_unix(s.last_contact_unix) << "\n";
 
     std::cout << "\n  PROGRESS\n";
-    if (s.has_airport_pos) {
-        double total_km   = haversine_km(s.origin_lat, s.origin_lon,
-                                         s.dest_lat,   s.dest_lon);
-        double covered_km = haversine_km(s.origin_lat, s.origin_lon,
-                                         s.latitude,   s.longitude);
-        double pct = (total_km > 0) ? (covered_km / total_km * 100.0) : 0.0;
-        if (pct < 0) pct = 0;
-        if (pct > 100) pct = 100;
-        std::cout << "  route        : " << (int)total_km   << " km total\n";
-        std::cout << "  covered      : " << (int)covered_km << " km\n";
+    double pct = -1.0;
+    if (s.fa_progress_pct >= 0) {
+        // Use FA's actual route progress
+        pct = s.fa_progress_pct;
+    } else if (s.has_airport_pos) {
+        // Fall back to haversine approximation
+        double total_km   = haversine_km(s.origin_lat, s.origin_lon, s.dest_lat, s.dest_lon);
+        double covered_km = haversine_km(s.origin_lat, s.origin_lon, s.latitude, s.longitude);
+        pct = (total_km > 0) ? std::min(100.0, std::max(0.0, covered_km / total_km * 100.0)) : 0.0;
+    }
+    if (pct >= 0) {
         print_progress_bar(pct);
-        if (s.speed_ms > 0 && covered_km < total_km) {
+        // Remaining time: prefer FA's ETA, fall back to speed-based estimate
+        if (s.fa_eta_unix > 0) {
+            long remaining = (long)(s.fa_eta_unix - time(nullptr));
+            if (remaining > 0)
+                std::cout << "  est. remaining : " << fmt_elapsed(remaining) << "\n";
+        } else if (s.has_airport_pos && s.speed_ms > 0) {
+            double total_km   = haversine_km(s.origin_lat, s.origin_lon, s.dest_lat, s.dest_lon);
+            double covered_km = haversine_km(s.origin_lat, s.origin_lon, s.latitude, s.longitude);
             long eta_secs = (long)((total_km - covered_km) * 1000.0 / s.speed_ms);
-            std::cout << "  est. remaining : " << fmt_elapsed(eta_secs) << "\n";
+            if (eta_secs > 0)
+                std::cout << "  est. remaining : " << fmt_elapsed(eta_secs) << "\n";
         }
-    } else {
-        std::cout << "  (need origin+dest airport coords — route lookup may have failed)\n";
-        std::cout << "  origin ICAO : " << (s.origin_icao.empty() ? "not found" : s.origin_icao) << "\n";
-        std::cout << "  dest   ICAO : " << (s.dest_icao.empty()   ? "not found" : s.dest_icao)   << "\n";
     }
 
     std::cout << "========================================\n\n";
@@ -276,10 +304,13 @@ int main() {
 
     const char *client_id     = getenv("CLIENT_ID");
     const char *client_secret = getenv("CLIENT_SECRET");
+    const char *fa_key        = getenv("FLIGHTAWARE_KEY");  // optional
     if (!client_id || !client_secret || !*client_id || !*client_secret) {
         std::cerr << "Set CLIENT_ID and CLIENT_SECRET environment variables.\n";
         return 1;
     }
+    if (!fa_key || !*fa_key)
+        std::cout << "[info] FLIGHTAWARE_KEY not set — using track-based fallback\n";
 
     // 1. Locate the machine
     std::cout << "[1/3] Resolving location from IP...\n";
@@ -302,40 +333,40 @@ int main() {
         std::cerr << "No nearby commercial flights found.\n";
         return 1;
     }
-    std::cout << "      Found " << candidates.size() << " candidates:\n";
-    for (auto &c : candidates)
-        std::cout << "        " << c.callsign << " (" << c.icao24 << ")\n";
+    std::cout << "      Found " << candidates.size() << " candidates, searching for one with full route...\n";
 
-    // 3. Try each candidate until we find one with valid track data
-    std::cout << "[3/3] Fetching track data — trying each candidate...\n";
-    FlightData *winner = nullptr;
+    // 3. Linear search — stop at first flight with both origin and destination.
+    // FA is only tried for the first 3 candidates to avoid burning rate limit.
+    std::cout << "[3/3] Fetching flight data...\n";
+    bool found = false;
+    int fa_attempts = 0;
     for (auto &c : candidates) {
-        std::cout << "      trying " << c.callsign << "... ";
-        auto *fd = new FlightData(c.icao24, client_id, client_secret);
-        fd->refresh();
-        const FlightState &s = fd->state();
-        std::cout << "origin=" << (s.origin_icao.empty() ? "?" : s.origin_icao)
-                  << " dest=" << (s.dest_icao.empty()   ? "?" : s.dest_icao)
-                  << " airport_pos=" << (s.has_airport_pos ? "yes" : "no") << " | ";
-        if (s.has_airport_pos) {
-            std::cout << "route OK (" << s.origin_icao << " -> " << s.dest_icao << ")\n";
-            winner = fd;
+        std::cout << "      trying " << c.callsign << "...\n";
+        FlightData fd(c.icao24, client_id, client_secret);
+        fd.prime(c.state);
+        if (fa_key && *fa_key && fa_attempts < 3) {
+            fd.set_flightaware_key(fa_key);
+            ++fa_attempts;
+        }
+        fd.refresh();
+        const FlightState &s = fd.state();
+        if (!s.origin_icao.empty() && !s.dest_icao.empty()) {
+            double pct = -1.0;
+            if (s.fa_progress_pct >= 0) {
+                pct = s.fa_progress_pct;
+            } else if (s.has_airport_pos) {
+                double total_km   = haversine_km(s.origin_lat, s.origin_lon, s.dest_lat, s.dest_lon);
+                double covered_km = haversine_km(s.origin_lat, s.origin_lon, s.latitude, s.longitude);
+                pct = total_km > 0 ? covered_km / total_km * 100.0 : 0.0;
+            }
+            if (pct <= 0.0 || pct >= 100.0) continue;
+            print_state(s);
+            found = true;
             break;
         }
-        std::cout << "no route\n";
-        delete fd;
     }
-
-    if (!winner) {
-        std::cerr << "No candidate had valid track data.\n";
-        // Fall back to printing the first candidate's state anyway
-        FlightData fd(candidates[0].icao24, client_id, client_secret);
-        fd.refresh();
-        print_state(fd.state());
-    } else {
-        print_state(winner->state());
-        delete winner;
-    }
+    if (!found)
+        std::cerr << "No nearby flight with a complete route found.\n";
 
     curl_global_cleanup();
     return 0;

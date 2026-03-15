@@ -8,7 +8,7 @@ CXXFLAGS_CON = -Wall -O3 -std=c++17   # no matrix include needed
 LDFLAGS      = -L$(RGB_LIBDIR) -lrgbmatrix -lrt -lm -lpthread -lcurl
 LDFLAGS_CON  = -lrt -lm -lpthread -lcurl
 
-OBJS = driver.o flight_data.o
+OBJS = driver.o flight_data.o route_lookup.o
 
 all: driver
 
@@ -20,8 +20,8 @@ driver: $(OBJS) $(RGB_LIBRARY)
 
 # Console-only test binary — no rpi-rgb-led-matrix dependency.
 # Compile flight_data.cc with the console flags (no matrix include path needed).
-test-console: test_console.cc flight_data.cc flight_data.h
-	$(CXX) $(CXXFLAGS_CON) test_console.cc flight_data.cc -o $@ $(LDFLAGS_CON)
+test-console: test_console.cc flight_data.cc route_lookup.cc flight_data.h route_lookup.h
+	$(CXX) $(CXXFLAGS_CON) test_console.cc flight_data.cc route_lookup.cc -o $@ $(LDFLAGS_CON)
 
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@
