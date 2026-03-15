@@ -5,6 +5,7 @@ struct RouteInfo {
     std::string origin_icao;
     std::string dest_icao;
     int         progress_pct = -1;   // FA's actual route progress, -1 = unknown
+    std::string aircraft_type;           // ICAO type code e.g. "B737", empty if unknown
     time_t      eta_unix     = 0;    // estimated arrival unix timestamp, 0 = unknown
 };
 

@@ -78,17 +78,22 @@ bool FlightData::refresh() {
     }
 
     // --- Route (origin/dest) ---
-    // FlightAware is primary (real filed flight plan); track-based inference is fallback.
-    ensure_token();
-    RouteInfo route = lookup_route(fa_key_, token_,
-                                   state_.callsign, icao24_,
-                                   state_.latitude, state_.longitude,
-                                   state_.altitude_m, state_.vertical_rate_ms,
-                                   state_.track_deg);
-    state_.origin_icao    = route.origin_icao;
-    state_.dest_icao      = route.dest_icao;
-    state_.fa_progress_pct = route.progress_pct;
-    state_.fa_eta_unix    = route.eta_unix;
+    // Only call lookup_route (and FA) when we don't have the route yet.
+    // FA is expensive (10 calls/day limit); once we have origin+dest+aircraft
+    // we never need to ask again — progress/ETA update via haversine each refresh.
+    if (state_.origin_icao.empty() || state_.dest_icao.empty()) {
+        ensure_token();
+        RouteInfo route = lookup_route(fa_key_, token_,
+                                       state_.callsign, icao24_,
+                                       state_.latitude, state_.longitude,
+                                       state_.altitude_m, state_.vertical_rate_ms,
+                                       state_.track_deg);
+        state_.origin_icao     = route.origin_icao;
+        state_.dest_icao       = route.dest_icao;
+        state_.fa_progress_pct = route.progress_pct;
+        state_.fa_eta_unix     = route.eta_unix;
+        state_.aircraft_type   = route.aircraft_type;
+    }
 
     // --- Airport positions (for great-circle progress) ---
     if (!state_.origin_icao.empty() && !state_.dest_icao.empty()) {

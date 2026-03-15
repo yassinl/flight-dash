@@ -77,6 +77,7 @@ static RouteInfo flightaware_lookup(const std::string &fa_key,
             r.origin_icao   = ori;
             r.dest_icao     = dst;
             r.progress_pct  = pct;
+            r.aircraft_type = f.value("aircraft_type", "");
             // Parse estimated_in (ISO8601 "2026-03-14T23:30:00Z") → unix timestamp
             std::string eta_str = f.value("estimated_in", "");
             if (!eta_str.empty()) {

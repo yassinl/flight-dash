@@ -103,9 +103,9 @@ static std::string fetch_token(const std::string &client_id,
 static std::vector<NearbyFlight> find_nearby(double lat, double lon,
                                              const std::string &token,
                                              int max_results = 50) {
-    // 50 miles ≈ 0.725° latitude; longitude degrees shrink with cos(lat)
-    const double dlat = 50.0 / 69.0;
-    const double dlon = 50.0 / (69.0 * std::cos(lat * M_PI / 180.0));
+    // 100 miles ≈ 1.449° latitude; longitude degrees shrink with cos(lat)
+    const double dlat = 100.0 / 69.0;
+    const double dlon = 100.0 / (69.0 * std::cos(lat * M_PI / 180.0));
     std::ostringstream url;
     url << "https://opensky-network.org/api/states/all"
         << "?lamin=" << (lat - dlat)
@@ -239,6 +239,7 @@ static void print_state(const FlightState &s) {
     }
     std::cout << "  squawk       : " << (s.squawk.empty() ? "n/a" : s.squawk) << "\n";
     std::cout << "  airline      : " << (s.airline.empty() ? "unknown" : s.airline) << "\n";
+    std::cout << "  aircraft     : " << (s.aircraft_type.empty() ? "unknown" : s.aircraft_type) << "\n";
     std::cout << "  on ground    : " << (s.on_ground ? "yes" : "no") << "\n";
     std::cout << "  data valid   : " << (s.valid    ? "yes" : "no") << "\n";
 
@@ -309,8 +310,12 @@ int main() {
         std::cerr << "Set CLIENT_ID and CLIENT_SECRET environment variables.\n";
         return 1;
     }
-    if (!fa_key || !*fa_key)
-        std::cout << "[info] FLIGHTAWARE_KEY not set — using track-based fallback\n";
+    if (!fa_key || !*fa_key) {
+        std::cerr << "[WARN] FLIGHTAWARE_KEY not set\n"
+                     "       Route/progress data will be unavailable.\n"
+                     "       Export it before running:\n"
+                     "         export FLIGHTAWARE_KEY=your_key_here\n";
+    }
 
     // 1. Locate the machine
     std::cout << "[1/3] Resolving location from IP...\n";
@@ -344,7 +349,7 @@ int main() {
         std::cout << "      trying " << c.callsign << "...\n";
         FlightData fd(c.icao24, client_id, client_secret);
         fd.prime(c.state);
-        if (fa_key && *fa_key && fa_attempts < 3) {
+        if (fa_key && *fa_key && fa_attempts < 1) {
             fd.set_flightaware_key(fa_key);
             ++fa_attempts;
         }

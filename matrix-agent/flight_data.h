@@ -15,6 +15,7 @@ struct FlightState {
     std::string dest_icao;      // e.g. "LFPG"
     int         fa_progress_pct = -1;  // FA's actual route progress (0-100), -1 = unknown
     time_t      fa_eta_unix     = 0;   // FA estimated arrival unix timestamp, 0 = unknown
+    std::string aircraft_type;             // ICAO type code e.g. "B737", empty if unknown
 
     // Live position
     float latitude  = 0.f;     // decimal degrees
