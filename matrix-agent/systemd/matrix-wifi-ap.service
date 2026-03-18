@@ -1,0 +1,12 @@
+[Unit]
+Description=Flight Dashboard — WiFi AP fallback
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/freakypigeon/workspace/flight-dash/matrix-agent/wifi-ap.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

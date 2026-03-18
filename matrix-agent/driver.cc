@@ -71,30 +71,26 @@ static void draw_bar(FrameCanvas *c, int x, int y, int w, int h,
 static void render(FrameCanvas *canvas,
                    const Font &large, const Font &small,
                    const FlightState &s, bool landed) {
-    const Color black(0,0,0), yellow(255,215,0), white(255,255,255);
-    const Color cyan(0,200,255), gray(120,120,120), green(80,220,80), red(220,60,60);
+    const Color black(0,0,0), white(255,255,255);
+    const Color green(80,220,80);
     const int COL1=2, COL2=66, COL3=130;
-    const int ROW1=0, ROW2=18, ROW3=36, ROW4=52;
     canvas->Fill(0,0,0);
 
     std::string airline = s.airline.size()>10 ? s.airline.substr(0,10) : s.airline;
-    DrawText(canvas,large,COL1,ROW1+large.baseline(),yellow,&black,airline.c_str(),0);
-    DrawText(canvas,small,COL1,ROW2+small.baseline(),white, &black,s.callsign.c_str(),0);
-    DrawText(canvas,small,COL1,ROW3+small.baseline(),gray,  &black,
+    DrawText(canvas,small,COL1, 1+small.baseline(),white,&black,airline.c_str(),0);
+    DrawText(canvas,small,COL1,12+small.baseline(),white,&black,s.callsign.c_str(),0);
+    DrawText(canvas,small,COL1,23+small.baseline(),white,&black,
              s.aircraft_type.empty() ? "---" : s.aircraft_type.c_str(),0);
-    DrawText(canvas,small,COL1,ROW4+small.baseline(),
-             s.valid?green:gray,&black,s.valid?"LIVE":"WAIT",0);
 
     if (!s.origin_icao.empty()) {
-        DrawText(canvas,large,COL2,ROW1+large.baseline(),white,&black,s.origin_icao.c_str(),0);
-        DrawText(canvas,large,COL2,ROW2+large.baseline(),white,&black,s.dest_icao.c_str(),0);
+        DrawText(canvas,small,COL2, 1+small.baseline(),white,&black,s.origin_icao.c_str(),0);
+        DrawText(canvas,small,COL2,12+small.baseline(),white,&black,s.dest_icao.c_str(),0);
+        DrawText(canvas,small,COL2,23+small.baseline(),white,&black,
+                 landed?"LANDED":fmt_eta(s).c_str(),0);
         double pct = landed ? 100.0 : compute_progress(s);
         if (pct >= 0)
-            draw_bar(canvas,COL2,ROW3+4,60,6,pct,
-                     (landed || pct>=95) ? green : yellow);
-        DrawText(canvas,small,COL2,ROW4+small.baseline(),
-                 landed?green:cyan,&black,
-                 landed?"LANDED":fmt_eta(s).c_str(),0);
+            draw_bar(canvas,6,canvas->height()-6,180,5,pct,
+                     Color(0,200,0));
     }
 
     char alt[32],spd[32],trk[32],vr[32];
@@ -102,11 +98,10 @@ static void render(FrameCanvas *canvas,
     snprintf(spd,sizeof(spd),"SPD%4.0fkt", s.speed_ms*1.94384f);
     snprintf(trk,sizeof(trk),"TRK%3.0fdeg",s.track_deg);
     snprintf(vr, sizeof(vr), "V/R%+.0fm/s",s.vertical_rate_ms);
-    DrawText(canvas,small,COL3,ROW1+small.baseline(),cyan, &black,alt,0);
-    DrawText(canvas,small,COL3,ROW2+small.baseline(),cyan, &black,spd,0);
-    DrawText(canvas,small,COL3,ROW3+small.baseline(),white,&black,trk,0);
-    DrawText(canvas,small,COL3,ROW4+small.baseline(),
-             s.vertical_rate_ms>=0?green:red,&black,vr,0);
+    DrawText(canvas,small,COL3, 1+small.baseline(),white,&black,alt,0);
+    DrawText(canvas,small,COL3,12+small.baseline(),white,&black,spd,0);
+    DrawText(canvas,small,COL3,23+small.baseline(),white,&black,trk,0);
+    DrawText(canvas,small,COL3,34+small.baseline(),white,&black,vr, 0);
 }
 
 int main(int argc, char *argv[]) {
@@ -168,6 +163,11 @@ int main(int argc, char *argv[]) {
             fprintf(stderr,"  trying %s...\n", c.callsign.c_str());
             auto *cand = new FlightData(c.icao24, client_id, client_secret);
             cand->prime(c.state);
+            if (!fa_used && !fa_key.empty()) {
+                fprintf(stderr,"  [FA] using FlightAware for %s\n", c.callsign.c_str());
+                cand->set_flightaware_key(fa_key);
+                fa_used = true;
+            }
             if (!fa_used && !fa_key.empty()) { cand->set_flightaware_key(fa_key); fa_used=true; }
             cand->refresh();
             const FlightState &s = cand->state();

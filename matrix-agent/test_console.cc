@@ -125,17 +125,26 @@ static std::vector<NearbyFlight> find_nearby(double lat, double lon,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &body);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT,       15L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    long http_code = 0;
     CURLcode res = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
+    std::cerr << "[find_nearby] HTTP " << http_code << "  body_len=" << body.size()
+                << "  curl=" << curl_easy_strerror(res) << "\n";
+    if (body.size() < 500) std::cerr << "[find_nearby] body: " << body << "\n";
     if (res != CURLE_OK || body.empty()) return {};
+
 
     std::vector<NearbyFlight> results;
     try {
         auto j = json::parse(body);
         auto &states = j.at("states");
-        if (states.is_null() || states.empty()) return {};
-
+        if (states.is_null() || states.empty()) {
+        std::cerr << "[find_nearby] states null/empty\n";
+        return {};
+        }
+        std::cerr << "[find_nearby] got " << states.size() << " raw states\n";
         for (auto &s : states) {
             if ((int)results.size() >= max_results) break;
 

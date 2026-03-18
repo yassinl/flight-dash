@@ -1,17 +1,15 @@
 [Unit]
-Description=Matrix Flight Dashboard Web Server (mDNS)
-After=network-online.target
-Wants=network-online.target
+Description=Flight Dashboard — Web + mDNS server
+After=matrix-wifi-ap.service network.target
+Wants=matrix-wifi-ap.service
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/matrix-agent
-ExecStart=/usr/bin/python3 /home/pi/matrix-agent/server.py
+User=freakypigeon
+WorkingDirectory=/home/freakypigeon/workspace/flight-dash/matrix-agent
+ExecStart=/usr/bin/python3 /home/freakypigeon/workspace/flight-dash/matrix-agent/server.py
 Restart=always
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
