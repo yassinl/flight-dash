@@ -174,20 +174,24 @@ static void render(FrameCanvas *canvas,
     DrawText(canvas,small,COL1,23+small.baseline(),white,&black,
              s.aircraft_type.empty() ? "---" : s.aircraft_type.c_str(),0);
 
-    if (!s.origin_icao.empty()) {
-        DrawText(canvas,small,COL2, 1+small.baseline(),white,&black,s.origin_icao.c_str(),0);
-        DrawText(canvas,small,COL2,12+small.baseline(),white,&black,s.dest_icao.c_str(),0);
-        DrawText(canvas,small,COL2,23+small.baseline(),white,&black,
-                 landed?"LANDED":fmt_eta(s).c_str(),0);
-        double pct = landed ? 100.0 : compute_progress(s);
-        if (pct >= 0) {
-            char pct_str[16];
-            snprintf(pct_str, sizeof(pct_str), "%.0f%%", pct);
-            DrawText(canvas,small,COL2,34+small.baseline(),white,&black,pct_str,0);
-            draw_bar(canvas, 0, canvas->height()-6, canvas->width(), 5, pct,
-                     Color(0,200,0));
-        }
+// AFTER – origin/dest stacked below the logo on the left
+const int LEFT = 2;   // x position, same left margin as COL1 text
+if (!s.origin_icao.empty()) {
+    DrawText(canvas,small,LEFT,32+small.baseline(),white,&black,s.origin_icao.c_str(),0);
+    DrawText(canvas,small,LEFT,43+small.baseline(),white,&black,s.dest_icao.c_str(),0);
+
+    // ETA and progress stay at COL2
+    DrawText(canvas,small,COL2,23+small.baseline(),white,&black,
+             landed?"LANDED":fmt_eta(s).c_str(),0);
+    double pct = landed ? 100.0 : compute_progress(s);
+    if (pct >= 0) {
+        char pct_str[16];
+        snprintf(pct_str, sizeof(pct_str), "%.0f%%", pct);
+        DrawText(canvas,small,COL2,34+small.baseline(),white,&black,pct_str,0);
+        draw_bar(canvas, 0, canvas->height()-6, canvas->width(), 5, pct,
+                 Color(0,200,0));
     }
+}
 
     char alt[32],spd[32],trk[32],vr[32];
     snprintf(alt,sizeof(alt),"ALT%5.0fft",s.altitude_m*3.28084f);
