@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 using namespace rgb_matrix;
 
@@ -138,6 +139,59 @@ static void draw_bar(FrameCanvas *c, int x, int y, int w, int h,
             c->SetPixel(px,py,fill.r,fill.g,fill.b);
 }
 
+static std::vector<std::string> parse_csv_row(const std::string &line) {
+    std::vector<std::string> fields;
+    std::string field;
+    bool in_quotes = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        char c = line[i];
+        if (in_quotes) {
+            if (c == '"') {
+                if (i+1 < line.size() && line[i+1] == '"') { field += '"'; ++i; }
+                else in_quotes = false;
+            } else {
+                field += c;
+            }
+        } else {
+            if (c == '"')       { in_quotes = true; }
+            else if (c == ',')  { fields.push_back(field); field.clear(); }
+            else                { field += c; }
+        }
+    }
+    fields.push_back(field);
+    return fields;
+}
+
+static std::unordered_map<std::string,std::string> load_airport_names(const std::string &path) {
+    std::unordered_map<std::string,std::string> map;
+    FILE *f = fopen(path.c_str(), "r");
+    if (!f) return map;
+    char buf[4096];
+    fgets(buf, sizeof(buf), f); // skip header row
+    while (fgets(buf, sizeof(buf), f)) {
+        std::string line(buf);
+        while (!line.empty() && (line.back()=='\n'||line.back()=='\r')) line.pop_back();
+        auto fields = parse_csv_row(line);
+        if (fields.size() < 13) continue;
+        const std::string &ident = fields[1];
+        const std::string &name  = fields[3];
+        const std::string &icao  = fields[12];
+        if (!icao.empty())  map[icao]  = name;
+        if (!ident.empty() && map.find(ident) == map.end()) map[ident] = name;
+    }
+    fclose(f);
+    return map;
+}
+
+static std::string airport_display_name(
+        const std::unordered_map<std::string,std::string> &names,
+        const std::string &icao, size_t max_len = 20) {
+    auto it = names.find(icao);
+    std::string name = (it != names.end()) ? it->second : icao;
+    if (name.size() > max_len) name.resize(max_len);
+    return name;
+}
+
 static LogoImage load_logo(const std::string &callsign, int w, int h) {
     if (callsign.size() < 3) return {};
     std::string path = "../airline-logos/flightaware_logos/" + callsign.substr(0,3) + ".png";
@@ -148,9 +202,11 @@ static LogoImage load_logo(const std::string &callsign, int w, int h) {
 }
 
 static void render(FrameCanvas *canvas,
-                   const Font &large, const Font &small,
+                   const Font &large, const Font &small, const Font &tiny,
                    const FlightState &s, bool landed,
-                   const LogoImage &logo = {}) {
+                   const LogoImage &logo = {},
+                   const std::string &origin_name = {},
+                   const std::string &dest_name = {}) {
     const Color black(0,0,0), white(255,255,255);
     const bool has_logo = logo.ok();
     const int COL1 = has_logo ? 32 : 2;
@@ -177,17 +233,20 @@ static void render(FrameCanvas *canvas,
 // AFTER – origin/dest stacked below the logo on the left
 const int LEFT = 2;   // x position, same left margin as COL1 text
 if (!s.origin_icao.empty()) {
-    DrawText(canvas,small,LEFT,32+small.baseline(),white,&black,s.origin_icao.c_str(),0);
-    DrawText(canvas,small,LEFT,43+small.baseline(),white,&black,s.dest_icao.c_str(),0);
+    std::string oname = origin_name.empty() ? s.origin_icao : origin_name;
+    std::string dname = dest_name.empty()   ? s.dest_icao   : dest_name;
+    DrawText(canvas,small,LEFT,32+small.baseline(),white,&black,oname.c_str(),0);
+    DrawText(canvas,small,LEFT,43+small.baseline(),white,&black,dname.c_str(),0);
 
-    // ETA and progress stay at COL2
-    DrawText(canvas,small,COL2,23+small.baseline(),white,&black,
+    // ETA and progress – further right and near the bottom
+    const int ETA_X = 100;
+    DrawText(canvas,small,ETA_X,44+small.baseline(),white,&black,
              landed?"LANDED":fmt_eta(s).c_str(),0);
     double pct = landed ? 100.0 : compute_progress(s);
     if (pct >= 0) {
         char pct_str[16];
         snprintf(pct_str, sizeof(pct_str), "%.0f%%", pct);
-        DrawText(canvas,small,COL2,34+small.baseline(),white,&black,pct_str,0);
+        DrawText(canvas,small,ETA_X,53+small.baseline(),white,&black,pct_str,0);
         draw_bar(canvas, 0, canvas->height()-6, canvas->width(), 5, pct,
                  Color(0,200,0));
     }
@@ -198,10 +257,10 @@ if (!s.origin_icao.empty()) {
     snprintf(spd,sizeof(spd),"SPD %4.0fkt",  s.speed_ms*1.94384f);
     snprintf(trk,sizeof(trk),"TRK %3.0fdeg", s.track_deg);
     snprintf(vr, sizeof(vr), "V/R %+.0fm/s", s.vertical_rate_ms);
-    DrawText(canvas,small,COL3, 1+small.baseline(),white,&black,alt,0);
-    DrawText(canvas,small,COL3,12+small.baseline(),white,&black,spd,0);
-    DrawText(canvas,small,COL3,23+small.baseline(),white,&black,trk,0);
-    DrawText(canvas,small,COL3,34+small.baseline(),white,&black,vr, 0);
+    DrawText(canvas,tiny,COL3, 1+tiny.baseline(),white,&black,alt,0);
+    DrawText(canvas,tiny,COL3, 9+tiny.baseline(),white,&black,spd,0);
+    DrawText(canvas,tiny,COL3,17+tiny.baseline(),white,&black,trk,0);
+    DrawText(canvas,tiny,COL3,25+tiny.baseline(),white,&black,vr, 0);
 }
 
 int main(int argc, char *argv[]) {
@@ -221,13 +280,20 @@ int main(int argc, char *argv[]) {
     opts.rows=32; opts.cols=64; opts.chain_length=3; opts.parallel=2; rt.gpio_slowdown=4;
     rgb_matrix::ParseOptionsFromFlags(&argc,&argv,&opts,&rt);
 
-    Font large_font, small_font;
+    Font large_font, small_font, tiny_font;
     if (!large_font.LoadFont("../rpi-rgb-led-matrix/fonts/9x15B.bdf")) {
         fprintf(stderr,"no large font\n"); return 1;
     }
     if (!small_font.LoadFont("../rpi-rgb-led-matrix/fonts/6x10.bdf")) {
         fprintf(stderr,"no small font\n"); return 1;
     }
+    if (!tiny_font.LoadFont("../rpi-rgb-led-matrix/fonts/5x7.bdf")) {
+        fprintf(stderr,"no tiny font\n"); return 1;
+    }
+    auto airport_names = load_airport_names("../matrix-agent/airports.csv");
+    if (airport_names.empty())
+        fprintf(stderr, "[WARN] airport name lookup table is empty\n");
+
     RGBMatrix *matrix = RGBMatrix::CreateFromOptions(opts,rt);
     if (!matrix) return 1;
     FrameCanvas *canvas = matrix->CreateFrameCanvas();
@@ -284,6 +350,8 @@ int main(int argc, char *argv[]) {
                 fd->state().dest_icao.c_str());
 
         auto logo = load_logo(fd->state().callsign, 30, 30);
+        std::string oname = airport_display_name(airport_names, fd->state().origin_icao);
+        std::string dname = airport_display_name(airport_names, fd->state().dest_icao);
 
         std::mutex mtx;
         std::atomic<bool> stop{false};
@@ -295,7 +363,7 @@ int main(int argc, char *argv[]) {
             { std::lock_guard<std::mutex> lock(mtx); s = fd->state(); }
             if (s.on_ground) { if (++on_ground_count >= 3) break; }
             else              { on_ground_count = 0; }
-            render(canvas, large_font, small_font, s, false, logo);
+            render(canvas, large_font, small_font, tiny_font, s, false, logo, oname, dname);
             canvas = matrix->SwapOnVSync(canvas);
             usleep(16667);
         }
@@ -304,7 +372,7 @@ int main(int argc, char *argv[]) {
         if (interrupt_received) { delete fd; break; }
 
         { FlightState s; { std::lock_guard<std::mutex> lock(mtx); s = fd->state(); }
-          render(canvas, large_font, small_font, s, true, logo);
+          render(canvas, large_font, small_font, tiny_font, s, true, logo, oname, dname);
           canvas = matrix->SwapOnVSync(canvas); }
         for (int i=0; i<10 && !interrupt_received; ++i) sleep(1);
         delete fd;
