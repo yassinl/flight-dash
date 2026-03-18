@@ -3,6 +3,7 @@
 #include "graphics.h"
 #include "flight_data.h"
 #include "flight_finder.h"
+#include <Magick++.h>
 #include <signal.h>
 #include <unistd.h>
 #include <atomic>
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 using namespace rgb_matrix;
 
 volatile bool interrupt_received = false;
@@ -68,15 +70,45 @@ static void draw_bar(FrameCanvas *c, int x, int y, int w, int h,
             c->SetPixel(px,py,fill.r,fill.g,fill.b);
 }
 
+static std::vector<Magick::Image> load_logo(const std::string &callsign, int w, int h) {
+    if (callsign.size() < 3) return {};
+    std::string path = "../airline-logos/flightaware_logos/" + callsign.substr(0,3) + ".png";
+    std::vector<Magick::Image> result;
+    try {
+        Magick::Image img;
+        img.read(path);
+        img.scale(Magick::Geometry(w, h));
+        result.push_back(img);
+    } catch (...) {}
+    return result;
+}
+
 static void render(FrameCanvas *canvas,
                    const Font &large, const Font &small,
-                   const FlightState &s, bool landed) {
+                   const FlightState &s, bool landed,
+                   const std::vector<Magick::Image> &logo = {}) {
     const Color black(0,0,0), white(255,255,255);
-    const Color green(80,220,80);
-    const int COL1=2, COL2=66, COL3=130;
+    const bool has_logo = !logo.empty();
+    const int COL1 = has_logo ? 32 : 2;
+    const int COL2=66, COL3=130;
     canvas->Fill(0,0,0);
 
-    std::string airline = s.airline.size()>10 ? s.airline.substr(0,10) : s.airline;
+    if (has_logo) {
+        const Magick::Image &img = logo[0];
+        for (size_t ly = 0; ly < img.rows(); ++ly)
+            for (size_t lx = 0; lx < img.columns(); ++lx) {
+                const Magick::Color &c = img.pixelColor(lx, ly);
+                if (c.alphaQuantum() < 256)
+                    canvas->SetPixel((int)lx, (int)ly,
+                        ScaleQuantumToChar(c.redQuantum()),
+                        ScaleQuantumToChar(c.greenQuantum()),
+                        ScaleQuantumToChar(c.blueQuantum()));
+            }
+    }
+
+    int max_airline = has_logo ? 5 : 10;
+    std::string airline = (int)s.airline.size() > max_airline
+                          ? s.airline.substr(0, max_airline) : s.airline;
     DrawText(canvas,small,COL1, 1+small.baseline(),white,&black,airline.c_str(),0);
     DrawText(canvas,small,COL1,12+small.baseline(),white,&black,s.callsign.c_str(),0);
     DrawText(canvas,small,COL1,23+small.baseline(),white,&black,
@@ -88,9 +120,13 @@ static void render(FrameCanvas *canvas,
         DrawText(canvas,small,COL2,23+small.baseline(),white,&black,
                  landed?"LANDED":fmt_eta(s).c_str(),0);
         double pct = landed ? 100.0 : compute_progress(s);
-        if (pct >= 0)
-            draw_bar(canvas,6,canvas->height()-6,180,5,pct,
+        if (pct >= 0) {
+            char pct_str[16];
+            snprintf(pct_str, sizeof(pct_str), "%.0f%%", pct);
+            DrawText(canvas,small,COL2,34+small.baseline(),white,&black,pct_str,0);
+            draw_bar(canvas, 0, canvas->height()-6, canvas->width(), 5, pct,
                      Color(0,200,0));
+        }
     }
 
     char alt[32],spd[32],trk[32],vr[32];
@@ -105,6 +141,7 @@ static void render(FrameCanvas *canvas,
 }
 
 int main(int argc, char *argv[]) {
+    Magick::InitializeMagick(argv[0]);
     curl_global_init(CURL_GLOBAL_DEFAULT);
     const char *client_id     = getenv("CLIENT_ID");
     const char *client_secret = getenv("CLIENT_SECRET");
@@ -183,6 +220,8 @@ int main(int argc, char *argv[]) {
                 fd->state().origin_icao.c_str(),
                 fd->state().dest_icao.c_str());
 
+        auto logo = load_logo(fd->state().callsign, 30, 30);
+
         std::mutex mtx;
         std::atomic<bool> stop{false};
         std::thread t(refresh_loop, fd, &mtx, &stop);
@@ -193,7 +232,7 @@ int main(int argc, char *argv[]) {
             { std::lock_guard<std::mutex> lock(mtx); s = fd->state(); }
             if (s.on_ground) { if (++on_ground_count >= 3) break; }
             else              { on_ground_count = 0; }
-            render(canvas, large_font, small_font, s, false);
+            render(canvas, large_font, small_font, s, false, logo);
             canvas = matrix->SwapOnVSync(canvas);
             usleep(16667);
         }
@@ -202,7 +241,7 @@ int main(int argc, char *argv[]) {
         if (interrupt_received) { delete fd; break; }
 
         { FlightState s; { std::lock_guard<std::mutex> lock(mtx); s = fd->state(); }
-          render(canvas, large_font, small_font, s, true);
+          render(canvas, large_font, small_font, s, true, logo);
           canvas = matrix->SwapOnVSync(canvas); }
         for (int i=0; i<10 && !interrupt_received; ++i) sleep(1);
         delete fd;

@@ -3,9 +3,12 @@ RGB_INCDIR  = $(RGB_LIB)/include
 RGB_LIBDIR  = $(RGB_LIB)/lib
 RGB_LIBRARY = $(RGB_LIBDIR)/librgbmatrix.a
 
-CXXFLAGS     = -Wall -O3 -std=c++17 -I$(RGB_INCDIR)
+MAGICK_CXXFLAGS = $(shell Magick++-config --cxxflags)
+MAGICK_LIBS     = $(shell Magick++-config --libs)
+
+CXXFLAGS     = -Wall -O3 -std=c++17 -I$(RGB_INCDIR) $(MAGICK_CXXFLAGS)
 CXXFLAGS_CON = -Wall -O3 -std=c++17   # no matrix include needed
-LDFLAGS      = -L$(RGB_LIBDIR) -lrgbmatrix -lrt -lm -lpthread -lcurl
+LDFLAGS      = -L$(RGB_LIBDIR) -lrgbmatrix -lrt -lm -lpthread -lcurl $(MAGICK_LIBS)
 LDFLAGS_CON  = -lrt -lm -lpthread -lcurl
 
 OBJS = driver.o flight_data.o route_lookup.o
