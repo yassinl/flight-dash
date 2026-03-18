@@ -194,10 +194,10 @@ if (!s.origin_icao.empty()) {
 }
 
     char alt[32],spd[32],trk[32],vr[32];
-    snprintf(alt,sizeof(alt),"ALT%5.0fft",s.altitude_m*3.28084f);
-    snprintf(spd,sizeof(spd),"SPD%4.0fkt", s.speed_ms*1.94384f);
-    snprintf(trk,sizeof(trk),"TRK%3.0fdeg",s.track_deg);
-    snprintf(vr, sizeof(vr), "V/R%+.0fm/s",s.vertical_rate_ms);
+    snprintf(alt,sizeof(alt),"ALT %5.0fft",  s.altitude_m*3.28084f);
+    snprintf(spd,sizeof(spd),"SPD %4.0fkt",  s.speed_ms*1.94384f);
+    snprintf(trk,sizeof(trk),"TRK %3.0fdeg", s.track_deg);
+    snprintf(vr, sizeof(vr), "V/R %+.0fm/s", s.vertical_rate_ms);
     DrawText(canvas,small,COL3, 1+small.baseline(),white,&black,alt,0);
     DrawText(canvas,small,COL3,12+small.baseline(),white,&black,spd,0);
     DrawText(canvas,small,COL3,23+small.baseline(),white,&black,trk,0);
