@@ -39,6 +39,33 @@ const AIRLINE_NAMES = {
 
 const PRIVATE_PREFIX_BLOCKLIST = ['N', 'EJA', 'LXJ', 'GAJ'];
 
+const AIRPORTS = {
+  JFK: 'John F. Kennedy International Airport',
+  LAX: 'Los Angeles International Airport',
+  ORD: "Chicago O'Hare International Airport",
+  ATL: 'Hartsfield-Jackson Atlanta International Airport',
+  DFW: 'Dallas/Fort Worth International Airport',
+  DEN: 'Denver International Airport',
+  SFO: 'San Francisco International Airport',
+  SEA: 'Seattle-Tacoma International Airport',
+  MIA: 'Miami International Airport',
+  BOS: 'Boston Logan International Airport',
+  LGA: 'LaGuardia Airport',
+  EWR: 'Newark Liberty International Airport',
+  IAH: 'George Bush Intercontinental Airport',
+  PHX: 'Phoenix Sky Harbor International Airport',
+  CLT: 'Charlotte Douglas International Airport'
+};
+
+const MOCK_ROUTES = [
+  ['JFK', 'LAX'],
+  ['ORD', 'DFW'],
+  ['ATL', 'MIA'],
+  ['DEN', 'SFO'],
+  ['BOS', 'SEA'],
+  ['LGA', 'PHX']
+];
+
 const defaultConfig = {
   wifi_configured: false,
   location_source: 'ip',
@@ -136,6 +163,12 @@ function buildFlight(airline, idx, nowMs) {
   const lon = config.longitude + Math.cos(phase / 130) * 0.8;
   const distanceMiles = haversineMiles(config.latitude, config.longitude, lat, lon);
 
+  const route = MOCK_ROUTES[idx % MOCK_ROUTES.length];
+  const originCode = route[0];
+  const destCode = route[1];
+  const altitudeFt = 28000 + (idx * 3500) % 11000;
+  const trackDeg = Math.round(((idx * 57 + 45) % 360));
+
   return {
     id: `${airline.code}${110 + idx}`,
     airline_code: airline.code,
@@ -149,6 +182,14 @@ function buildFlight(airline, idx, nowMs) {
     lat,
     lon,
     distance_miles: Number(distanceMiles.toFixed(1)),
+    speed_kts: 420 + (idx * 23) % 120,
+    altitude_ft: altitudeFt,
+    track_deg: trackDeg,
+    vertical_rate_fpm: 0,
+    origin_airport: originCode,
+    origin_airport_name: AIRPORTS[originCode],
+    destination_airport: destCode,
+    destination_airport_name: AIRPORTS[destCode],
     is_public_airline: true
   };
 }
@@ -234,8 +275,11 @@ async function fetchOpenSkyFlights(nowMs) {
       const callsign = decodeCallsign(row[1]);
       const lonValue = row[5];
       const latValue = row[6];
-      const velocity = Number(row[9] || 0);
+      const baroAltM = row[7];
       const onGround = Boolean(row[8]);
+      const velocity = Number(row[9] || 0);
+      const trueTrack = row[10];
+      const vertRateMs = row[11];
 
       if (!icao24 || typeof latValue !== 'number' || typeof lonValue !== 'number') return null;
       if (onGround) return null;
