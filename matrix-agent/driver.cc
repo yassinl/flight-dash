@@ -3,7 +3,7 @@
 #include "graphics.h"
 #include "flight_data.h"
 #include "flight_finder.h"
-#include <Magick++.h>
+#include <png.h>
 #include <signal.h>
 #include <unistd.h>
 #include <atomic>
@@ -14,6 +14,74 @@
 #include <thread>
 #include <vector>
 using namespace rgb_matrix;
+
+struct LogoImage {
+    std::vector<uint8_t> pixels; // RGBA row-major
+    int width = 0, height = 0;
+    bool ok() const { return !pixels.empty(); }
+};
+
+static LogoImage load_png_rgba(const std::string &path) {
+    FILE *fp = fopen(path.c_str(), "rb");
+    if (!fp) return {};
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    if (!png) { fclose(fp); return {}; }
+    png_infop info = png_create_info_struct(png);
+    if (!info) { png_destroy_read_struct(&png, nullptr, nullptr); fclose(fp); return {}; }
+    if (setjmp(png_jmpbuf(png))) {
+        png_destroy_read_struct(&png, &info, nullptr); fclose(fp); return {};
+    }
+    png_init_io(png, fp);
+    png_read_info(png, info);
+    int w = (int)png_get_image_width(png, info);
+    int h = (int)png_get_image_height(png, info);
+    png_byte ct = png_get_color_type(png, info);
+    png_byte bd = png_get_bit_depth(png, info);
+    if (bd == 16) png_set_strip_16(png);
+    if (ct == PNG_COLOR_TYPE_PALETTE) png_set_palette_to_rgb(png);
+    if (ct == PNG_COLOR_TYPE_GRAY && bd < 8) png_set_expand_gray_1_2_4_to_8(png);
+    if (png_get_valid(png, info, PNG_INFO_tRNS)) png_set_tRNS_to_alpha(png);
+    if (ct == PNG_COLOR_TYPE_RGB || ct == PNG_COLOR_TYPE_GRAY || ct == PNG_COLOR_TYPE_PALETTE)
+        png_set_filler(png, 0xFF, PNG_FILLER_AFTER);
+    if (ct == PNG_COLOR_TYPE_GRAY || ct == PNG_COLOR_TYPE_GRAY_ALPHA)
+        png_set_gray_to_rgb(png);
+    png_read_update_info(png, info);
+    LogoImage result; result.width = w; result.height = h;
+    result.pixels.resize(w * h * 4);
+    std::vector<png_bytep> rows(h);
+    for (int y = 0; y < h; ++y) rows[y] = &result.pixels[y * w * 4];
+    png_read_image(png, rows.data());
+    png_destroy_read_struct(&png, &info, nullptr);
+    fclose(fp);
+    return result;
+}
+
+static LogoImage scale_image(const LogoImage &src, int dw, int dh) {
+    LogoImage dst; dst.width = dw; dst.height = dh;
+    dst.pixels.resize(dw * dh * 4);
+    for (int dy = 0; dy < dh; ++dy) {
+        for (int dx = 0; dx < dw; ++dx) {
+            float sx = (dx + 0.5f) * src.width  / dw - 0.5f;
+            float sy = (dy + 0.5f) * src.height / dh - 0.5f;
+            int x0 = (int)sx, y0 = (int)sy;
+            int x1 = x0 + 1, y1 = y0 + 1;
+            float fx = sx - x0, fy = sy - y0;
+            x0 = std::max(0, std::min(src.width -1, x0));
+            x1 = std::max(0, std::min(src.width -1, x1));
+            y0 = std::max(0, std::min(src.height-1, y0));
+            y1 = std::max(0, std::min(src.height-1, y1));
+            uint8_t *out = &dst.pixels[(dy*dw+dx)*4];
+            for (int c = 0; c < 4; ++c) {
+                float v = src.pixels[(y0*src.width+x0)*4+c] * (1-fx)*(1-fy)
+                        + src.pixels[(y0*src.width+x1)*4+c] * fx*(1-fy)
+                        + src.pixels[(y1*src.width+x0)*4+c] * (1-fx)*fy
+                        + src.pixels[(y1*src.width+x1)*4+c] * fx*fy;
+                out[c] = (uint8_t)(v + 0.5f);
+            }
+        }
+    }
+    return dst;
+}
 
 volatile bool interrupt_received = false;
 static void InterruptHandler(int) { interrupt_received = true; }
@@ -70,39 +138,31 @@ static void draw_bar(FrameCanvas *c, int x, int y, int w, int h,
             c->SetPixel(px,py,fill.r,fill.g,fill.b);
 }
 
-static std::vector<Magick::Image> load_logo(const std::string &callsign, int w, int h) {
+static LogoImage load_logo(const std::string &callsign, int w, int h) {
     if (callsign.size() < 3) return {};
     std::string path = "../airline-logos/flightaware_logos/" + callsign.substr(0,3) + ".png";
-    std::vector<Magick::Image> result;
-    try {
-        Magick::Image img;
-        img.read(path);
-        img.scale(Magick::Geometry(w, h));
-        result.push_back(img);
-    } catch (...) {}
-    return result;
+    LogoImage raw = load_png_rgba(path);
+    if (!raw.ok()) return {};
+    if (raw.width == w && raw.height == h) return raw;
+    return scale_image(raw, w, h);
 }
 
 static void render(FrameCanvas *canvas,
                    const Font &large, const Font &small,
                    const FlightState &s, bool landed,
-                   const std::vector<Magick::Image> &logo = {}) {
+                   const LogoImage &logo = {}) {
     const Color black(0,0,0), white(255,255,255);
-    const bool has_logo = !logo.empty();
+    const bool has_logo = logo.ok();
     const int COL1 = has_logo ? 32 : 2;
     const int COL2=66, COL3=130;
     canvas->Fill(0,0,0);
 
     if (has_logo) {
-        const Magick::Image &img = logo[0];
-        for (size_t ly = 0; ly < img.rows(); ++ly)
-            for (size_t lx = 0; lx < img.columns(); ++lx) {
-                const Magick::Color &c = img.pixelColor(lx, ly);
-                if (c.alphaQuantum() < 256)
-                    canvas->SetPixel((int)lx, (int)ly,
-                        ScaleQuantumToChar(c.redQuantum()),
-                        ScaleQuantumToChar(c.greenQuantum()),
-                        ScaleQuantumToChar(c.blueQuantum()));
+        for (int ly = 0; ly < logo.height; ++ly)
+            for (int lx = 0; lx < logo.width; ++lx) {
+                const uint8_t *px = &logo.pixels[(ly*logo.width+lx)*4];
+                if (px[3] > 0)
+                    canvas->SetPixel(lx, ly, px[0], px[1], px[2]);
             }
     }
 
@@ -141,7 +201,6 @@ static void render(FrameCanvas *canvas,
 }
 
 int main(int argc, char *argv[]) {
-    Magick::InitializeMagick(argv[0]);
     curl_global_init(CURL_GLOBAL_DEFAULT);
     const char *client_id     = getenv("CLIENT_ID");
     const char *client_secret = getenv("CLIENT_SECRET");
